@@ -1,4 +1,4 @@
-FROM crmirror.lcpu.dev/docker.io/ubuntu:22.04
+FROM crmirror.lcpu.dev/docker.io/ubuntu:22.04 AS builder
 
 WORKDIR /riscv
 
@@ -48,8 +48,8 @@ RUN cd $TOOLCHAIN_SRC_DIR/riscv-gnu-toolchain-2024.11.22 && \
 --with-gcc-src=$TOOLCHAIN_SRC_DIR/gcc-14.2.0 \
 --with-glibc-src=$TOOLCHAIN_SRC_DIR/glibc-2.40 \
 --with-newlib-src=$TOOLCHAIN_SRC_DIR/newlib-4.4.0.20231231 && \
-make -j 4 && \
-make linux -j 4
+make -j 1 && \
+make linux -j 1
 
 # QEMU
 RUN cd $WORK_DIR && tar xf $TOOLCHAIN_PKG_DIR/qemu-9.2.0.tar.xz && \
@@ -122,3 +122,41 @@ tar -xf packages/chipyard-1.13.0.tar.gz && \
     cd chipyard-1.13.0 && cd sims/verilator/ && \
     make && ./simulator-chipyard.harness-RocketConfig $INSTALL_DIR/rv64g/riscv64-unknown-elf/share/riscv-tests/isa/rv64ui-p-simple && \
     make CONFIG=MediumBoomV3Config && ./simulator-chipyard.harness-MediumBoomV3Config $INSTALL_DIR/rv64g/riscv64-unknown-elf/share/riscv-tests/isa/rv64ui-p-simple
+
+# Cleanup - remove build directories
+RUN rm -rf $TOOLCHAIN_SRC_DIR/riscv-gnu-toolchain-2024.11.22/build-* && \
+    rm -rf build-qemu && \
+    cd verilator-5.030 && make clean && cd .. && \
+    rm -rf riscv-isa-sim-de5094a/build && \
+    rm -rf riscv-pk-1a52fa4/build && \
+    rm -rf riscv-tests-0494f95/build && \
+    rm -rf libgloss-39234a1/build && \
+    rm -rf $CIRCT_SRC_DIR/build && \
+    rm -rf $CIRCT_SRC_DIR/llvm/build
+
+
+FROM crmirror.lcpu.dev/docker.io/ubuntu:22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN sed -ri.bak -e 's/\/\/.*?(archive.ubuntu.com|mirrors.*?)\/ubuntu/\/\/mirrors.pku.edu.cn\/ubuntu/g' -e '/security.ubuntu.com\/ubuntu/d' /etc/apt/sources.list && \
+apt-get update && apt-get upgrade -y && apt-get install autoconf automake autotools-dev curl python3 python3-pip \
+    libmpc-dev libmpfr-dev libgmp-dev gawk build-essential \
+    bison flex texinfo gperf libtool patchutils bc zlib1g zlib1g-dev \
+    libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev \
+    python3-venv python3-tomli zip m4 scons libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+    openjdk-8-jdk make gtkwave device-tree-compiler help2man jq gpg -y
+
+RUN echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | tee /etc/apt/sources.list.d/sbt.list && \
+echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | tee /etc/apt/sources.list.d/sbt_old.list && \
+curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" |  apt-key add && apt update && apt-get install sbt -y
+
+ENV WORK_DIR=/riscv \
+    INSTALL_DIR=/riscv/install \
+    PATH=/riscv/install/rv64g/bin:/riscv/install/all/bin:$PATH \
+    RISCV=/riscv/install/rv64g
+
+WORKDIR /riscv
+
+COPY --from=builder /riscv /riscv
+CMD ["/bin/bash"]
